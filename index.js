@@ -1,28 +1,20 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
-const pino = require('pino');
-const express = require('express');
-
-// Create a basic web server to keep Render happy
-const app = express();
-const port = process.env.PORT || 3000;
-
-app.get('/', (req, res) => {
-    res.send('Bot is active!');
-});
-
-app.listen(port, () => {
-    console.log(`Server is listening on port ${port}`);
-});
-
-// Your Bot Logic
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('session');
     
     const sock = makeWASocket({
         logger: pino({ level: 'silent' }),
-        printQRInTerminal: true,
+        printQRInTerminal: false, // Changed to false
         auth: state,
     });
+
+    // Add this pairing code logic
+    if (!sock.authState.creds.registered) {
+        const phoneNumber = 'YOUR_PHONE_NUMBER'; // Replace with your number (e.g., 2348012345678)
+        setTimeout(async () => {
+            const code = await sock.requestPairingCode(phoneNumber);
+            console.log(`\n--- YOUR PAIRING CODE IS: ${code} ---\n`);
+        }, 3000); // Waits 3 seconds before showing the code
+    }
 
     sock.ev.on('creds.update', saveCreds);
 
@@ -36,5 +28,3 @@ async function startBot() {
         }
     });
 }
-
-startBot();
