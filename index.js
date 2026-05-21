@@ -1,48 +1,42 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
-const pino = require('pino');
-const express = require('express');
-
-const app = express();
-const port = process.env.PORT || 3000;
-
-app.get('/', (req, res) => {
-    res.send('Bot is active!');
-});
-
-// Start the express server first
-app.listen(port, () => {
-    console.log(`Server is listening on port ${port}`);
-    // Start the bot after the server is up
-    startBot();
-});
-
 async function startBot() {
-    const { state, saveCreds } = await useMultiFileAuthState('session');
+    // Ensure we are using a persistent path or a simple local one
+    const { state, saveCreds } = await useMultiFileAuthState('./session');
     
     const sock = makeWASocket({
         logger: pino({ level: 'silent' }),
         printQRInTerminal: false,
         auth: state,
+        // Browser config helps identify the connection properly
+        browser: ['Ubuntu', 'Chrome', '20.0.04'] 
     });
 
-    // Pairing code logic
-    if (!sock.authState.creds.registered) {
-        const phoneNumber = '2348012345678'; // Use YOUR actual number
-        setTimeout(async () => {
-            const code = await sock.requestPairingCode(phoneNumber);
-            console.log(`\n--- PAIRING CODE: ${code} ---\n`);
-        }, 5000); // 5 second delay
-    }
-
     sock.ev.on('creds.update', saveCreds);
+
+    // Only request pairing code if not already registered
+    if (!sock.authState.creds.registered) {
+        // Delaying ensures the socket has time to initialize
+        setTimeout(async () => {
+            const phoneNumber = '2348012345678'; // Use your actual number
+            try {
+                const code = await sock.requestPairingCode(phoneNumber);
+                console.log(`\n--- PAIRING CODE: ${code} ---\n`);
+            } catch (err) {
+                console.error("Pairing code error:", err);
+            }
+        }, 8000); 
+    }
 
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect } = update;
         if (connection === 'close') {
-            const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (shouldReconnect) startBot();
+            // Check if it's a permanent disconnect
+            const shouldReconnect = lastDisconnect.error?.output?.statusCode !== 401;
+            if (shouldReconnect) {
+                console.log("Connection lost, reconnecting...");
+                startBot();
+            }
         } else if (connection === 'open') {
-            console.log("Bot is online and connected!");
+            console.log("Successfully connected to WhatsApp!");
         }
     });
 }
