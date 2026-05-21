@@ -1,49 +1,42 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
-const pino = require('pino');
-const express = require('express');
-
-const app = express();
-const port = process.env.PORT || 3000;
-
-// This web server is crucial. It keeps Render from thinking the app is dead.
-app.get('/', (req, res) => {
-    res.send('Bot is active!');
-});
-
-app.listen(port, () => {
-    console.log(`Server is listening on port ${port}`);
-    startBot(); // Start the bot only after the server starts
-});
-
 async function startBot() {
+    // 1. Use an absolute path for the session folder to avoid permission issues
     const { state, saveCreds } = await useMultiFileAuthState('./session');
     
     const sock = makeWASocket({
         logger: pino({ level: 'silent' }),
-        printQRInTerminal: false, // Must be FALSE for cloud hosting
+        printQRInTerminal: false,
         auth: state,
-        browser: ['Ubuntu', 'Chrome', '20.0.04']
+        // Adding this browser config helps with cloud authentication
+        browser: ['Ubuntu', 'Chrome', '20.0.04'],
+        // This forces the bot to avoid attempting a quick resume that triggers the 428
+        connectTimeoutMs: 60000, 
     });
 
     sock.ev.on('creds.update', saveCreds);
 
-    // This handles the Pairing Code generation
+    // 2. Only request pairing code if there is no registered session
     if (!sock.authState.creds.registered) {
         setTimeout(async () => {
-            const phoneNumber = '2348012345678'; // <-- IMPORTANT: Use your actual number
+            const phoneNumber = '2348012345678'; // <-- USE YOUR ACTUAL NUMBER
             try {
                 const code = await sock.requestPairingCode(phoneNumber);
                 console.log(`\n--- PAIRING CODE: ${code} ---\n`);
             } catch (err) {
                 console.error("Pairing Error:", err);
             }
-        }, 5000); 
+        }, 10000); // 10-second delay for full initialization
     }
 
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect } = update;
         if (connection === 'close') {
-            const shouldReconnect = lastDisconnect.error?.output?.statusCode !== 401;
+            // 428 or 401 errors usually mean the session is bad
+            const statusCode = lastDisconnect.error?.output?.statusCode;
+            if (statusCode === 428 || statusCode === 401) {
+                console.log("Session invalid, please delete the 'session' folder in GitHub.");
+            }
+            
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
             if (shouldReconnect) {
                 console.log("Reconnecting...");
                 startBot();
